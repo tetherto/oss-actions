@@ -1,0 +1,16 @@
+name: Validate Semantic Versioning
+description: Validate Semantic Versioning in package.json
+
+runs:
+  using: composite
+  steps:
+    - name: Read & validate version
+      run: |
+        set -euo pipefail
+
+        VERSION=$(jq -r '.version' package.json)
+
+        if [[ ! "$VERSION" =~ ^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$ ]]; then
+          echo "❌ Error: package.json version ('$VERSION') does not conform to Semantic Versioning."
+          exit 1
+        fi
