@@ -1,17 +1,21 @@
-name: Release to public npm
+name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
-    branches:
-      - main
+  workflow_call:
+    inputs:
+      bump:
+        required: true
+        type: string
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+permissions:
+  contents: write
 
 jobs:
   release:
-    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
-    environment: release
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -20,6 +24,12 @@ jobs:
           node-version: lts/*
           registry-url: 'https://registry.npmjs.org'
 
-      - run: npm publish --access public
+      - run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          npm version ${{ inputs.bump }}
+          npm publish
+          git push --follow-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
