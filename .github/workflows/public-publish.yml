@@ -6,6 +6,11 @@ on:
       bump:
         required: true
         type: string
+      preid:
+        description: Pre-release identifier (e.g. alpha, beta, rc)
+        required: false
+        type: string
+  default: ''
     secrets:
       NPM_TOKEN:
         required: true
