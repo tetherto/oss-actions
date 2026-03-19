@@ -10,7 +10,7 @@ on:
         description: Pre-release identifier (e.g. alpha, beta, rc)
         required: false
         type: string
-  default: ''
+        default: ''
     secrets:
       NPM_TOKEN:
         required: true
