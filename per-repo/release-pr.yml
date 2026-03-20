@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: tetherto/actions/.github/workflows/release-pr.yml@v1
+    uses: tetherto/oss-actions/.github/workflows/release-pr.yml@v1
     with:
       bump: ${{ inputs.bump }}
       preid: ${{ inputs.preid }}
