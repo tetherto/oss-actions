@@ -50,14 +50,12 @@ jobs:
     steps:
       - name: Log Trigger Event and Contexts
         env:
-          SECRETS_CONTEXT: ${{ toJSON(secrets) }}
           GITHUB_CONTEXT: ${{ toJSON(github) }}
           INPUTS_CONTEXT: ${{ toJSON(inputs) }}
           WORKDIR: ${{ inputs.workdir }}
         run: |
           echo "workdir: $WORKDIR"
           echo "Inputs Context: $INPUTS_CONTEXT"
-          echo "Secrets Context: $SECRETS_CONTEXT"
           echo "Full GitHub Context: $GITHUB_CONTEXT"
 
       - name: Check tests status
