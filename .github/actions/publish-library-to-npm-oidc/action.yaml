@@ -35,6 +35,11 @@ inputs:
     description: "repo suffix name appended to created git tag"
     required: false
 
+  package_access:
+    description: "access level for the package"
+    required: false
+    default: "public"
+
 outputs:
   npm_published_version:
     description: "The version that was actually published to npm (empty if skipped)."
@@ -72,6 +77,7 @@ runs:
         GIT_REF: ${{ github.ref }}
         GIT_REPO: ${{ github.repository }}
         REPO_NAME: ${{ inputs.repo_name }}
+        PACKAGE_ACCESS: ${{ inputs.package_access }}
       run: |
         set -euo pipefail
 
@@ -157,7 +163,7 @@ runs:
         echo "Publishing version: $VERSION"
         echo "Commit: $SHORT_SHA"
 
-        ACCESS="restricted"
+        ACCESS="${PACKAGE_ACCESS}"
 
         if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
           echo "Version $VERSION already exists for $PACKAGE_NAME on npm, skipping publish"
