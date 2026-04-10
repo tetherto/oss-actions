@@ -5,9 +5,6 @@ inputs:
   secret-token:
     description: "GitHub Packages token (NODE_AUTH_TOKEN) used for publishing"
     required: true
-  pat-token:
-    description: "PAT token"
-    required: false
   release:
     description: "Use tag. Release stream, temporary here for compatibility with old workflows"
     required: false
