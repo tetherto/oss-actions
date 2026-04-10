@@ -43,7 +43,7 @@ inputs:
   npm_package_access:
     description: "access level for the npm package (e.g., public or restricted)"
     required: false
-    default: "public"
+    default: "restricted"
 
 outputs:
   npm_published_version:
