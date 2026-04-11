@@ -49,12 +49,6 @@ jobs:
             // console.log(`Checking approvals for PR #${prNumber} (triggered by: ${triggerEvent})`);
             console.log(`Checking approvals for PR #${prNumber}`);
             const mySecret = process.env.PAT_TOKEN;
-            if (mySecret === undefined || mySecret === null || mySecret === '') {
-              console.log('The secret MY_SECRET is empty or null.');
-            } else {
-              console.log('The secret MY_SECRET is available.');
-              console.log(`Secret value (first few chars): ${mySecret.substring(0, 5)}...`);
-            }
             // const core = require('@actions/core');
             const teamClient = new github.constructor({ auth: process.env.PAT_TOKEN });
 
