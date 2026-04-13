@@ -4,7 +4,7 @@ description: "Publish a trusted package to NPM"
 inputs:
   secret-token:
     description: "NPM auth token"
-    required: true
+    required: false
 
   release:
     description: "Use tag. Release stream, temporary here for compatibility with old workflows"
@@ -12,10 +12,6 @@ inputs:
 
   tag:
     description: "Release Stream (npm dist-tag)"
-    required: false
-
-  path:
-    description: "[DEPRECATED] Directory containing package.json (legacy); use workdir"
     required: false
 
   workdir:
@@ -30,10 +26,6 @@ inputs:
     description: "Set to 'true' to create a git tag after successful npm release"
     required: false
     default: "false"
-
-  repo_name:
-    description: "repo suffix name appended to created git tag"
-    required: false
 
   npm_package_scope:
     description: "Scope of the npm package"
@@ -58,14 +50,9 @@ runs:
   steps:
     - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # 6.3.0
       with:
-        node-version: "20.x"
+        node-version: "24.14.1" # installs npm version 11.11.0
         registry-url: "https://registry.npmjs.org/"
         scope: ${{ inputs.npm_package_scope }}
-
-    - name: Upgrade npm to support trusted publishing
-      shell: bash
-      run: |
-        npm install -g "npm@11.10.0"
 
     - name: Publish to NPM and optionally tag repo
       id: publish
@@ -74,14 +61,12 @@ runs:
         NODE_AUTH_TOKEN: ${{ inputs.secret-token }}
         GIT_PUSH_TOKEN: ${{ inputs.git-token }}
         CREATE_TAG: ${{ inputs.create-tag }}
-        INPUT_PATH: ${{ inputs.path }}
         INPUT_WORKDIR: ${{ inputs.workdir }}
         INPUT_TAG: ${{ inputs.tag }}
         INPUT_RELEASE: ${{ inputs.release }}
         EVENT_NAME: ${{ github.event_name }}
         GIT_REF: ${{ github.ref }}
         GIT_REPO: ${{ github.repository }}
-        REPO_NAME: ${{ inputs.repo_name }}
         NPM_PACKAGE_ACCESS: ${{ inputs.npm_package_access }}
         NPM_PACKAGE_SCOPE: ${{ inputs.npm_package_scope }}
       run: |
@@ -90,19 +75,9 @@ runs:
         ROOT="${GITHUB_WORKSPACE:-$(pwd)}"
 
         ####################################################################
-        # Resolve target directory (workdir preferred; path supported legacy)
+        # Resolve target directory (workdir)
         ####################################################################
-        TARGET_DIR=""
-
-        if [ -n "${INPUT_PATH}" ]; then
-          TARGET_DIR="${INPUT_PATH}"
-          echo "::warning title=Deprecated input::inputs.path is deprecated; use inputs.workdir instead."
-        elif [ -n "${INPUT_WORKDIR}" ]; then
-          TARGET_DIR="${INPUT_WORKDIR}"
-        else
-          echo "ERROR: You must set inputs.workdir (preferred) or inputs.path (deprecated legacy)." >&2
-          exit 1
-        fi
+        TARGET_DIR="${INPUT_WORKDIR}"
 
         echo "Target directory: ${TARGET_DIR}"
 
@@ -179,7 +154,7 @@ runs:
           exit 0
         fi
 
-          NPM_AUTH_TOKEN="" npm publish --tag "$TAG" --access "$ACCESS"
+        NPM_AUTH_TOKEN="" npm publish --tag "$TAG" --access "$ACCESS"
 
         echo "npm publish completed successfully"
 
@@ -196,16 +171,7 @@ runs:
           exit 0
         fi
 
-        if [ -z "${GIT_PUSH_TOKEN:-}" ]; then
-          echo "create-tag is 'true' but no git-token provided, skipping git tag step"
-          exit 0
-        fi
-
-        if [ -z "${REPO_NAME:-}" ]; then
-          TAG_NAME="v${VERSION}"
-        else
-          TAG_NAME="${REPO_NAME}-v${VERSION}"
-        fi
+        TAG_NAME="v${VERSION}"
 
         echo "Preparing to create git tag: ${TAG_NAME}"
 
