@@ -28,7 +28,7 @@ runs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        token: ${{ inputs.pat-token }}
+        token: ${{ inputs.pat-token || github.token }}
         repository: ${{ github.event.pull_request.head.repo.full_name }}
         ref: ${{ github.event.pull_request.head.ref }}
 
