@@ -44,16 +44,16 @@ runs:
         # Default public registry
         echo "registry=https://registry.npmjs.org/" >> .npmrc
 
-        # @qvac/* from npmjs.org
+        # @qvac/* from npmjs.org (public, auth optional)
         echo "@qvac:registry=https://registry.npmjs.org/" >> .npmrc
-        echo "//registry.npmjs.org/:_authToken=${{ inputs.npm-token }}" >> .npmrc
+        if [ -n "${{ inputs.npm-token }}" ]; then
+          echo "//registry.npmjs.org/:_authToken=${{ inputs.npm-token }}" >> .npmrc
+        fi
 
-        # @tetherto/* from GitHub Packages
-        echo "@tetherto:registry=https://npm.pkg.github.com/" >> .npmrc
-        echo "//npm.pkg.github.com/:_authToken=${{ inputs.pat-token }}" >> .npmrc
-
-        # If you use git+https deps, rewrite to include a PAT for private repos
+        # @tetherto/* from GitHub Packages (only when pat-token provided)
         if [ -n "${{ inputs.pat-token }}" ]; then
+          echo "@tetherto:registry=https://npm.pkg.github.com/" >> .npmrc
+          echo "//npm.pkg.github.com/:_authToken=${{ inputs.pat-token }}" >> .npmrc
           git config --global url."https://${{ inputs.pat-token }}:@github.com/".insteadOf "https://github.com/"
         fi
       shell: bash
