@@ -1,0 +1,195 @@
+name: Security Checks
+description: >-
+  Reusable security checks for OSS repos: GitHub Dependency Review,
+  package-lock.json drift detection, npm audit (signatures + moderate)
+  and an audit-ci high/critical gate. Each check can be skipped via input.
+  Designed to run inside a `pull_request` job with `contents: read` and
+  `pull-requests: read` permissions; the caller is expected to have
+  performed `actions/checkout` of the PR head before invoking this action.
+
+inputs:
+  skip-dependency-review:
+    description: Skip GitHub Dependency Review (actions/dependency-review-action)
+    default: "false"
+  dependency-review-fail-on-severity:
+    description: fail-on-severity for dependency-review-action (low|moderate|high|critical)
+    default: moderate
+  dependency-review-vulnerability-check:
+    description: vulnerability-check input for dependency-review-action
+    default: "true"
+  dependency-review-license-check:
+    description: license-check input for dependency-review-action
+    default: "true"
+  dependency-review-comment-summary-in-pr:
+    description: comment-summary-in-pr input for dependency-review-action (always|on-failure|never)
+    default: always
+
+  skip-lockfile-check:
+    description: Skip the package-lock.json drift check
+    default: "false"
+
+  skip-npm-audit-signatures:
+    description: Skip `npm audit signatures`
+    default: "false"
+  skip-npm-audit-moderate:
+    description: Skip `npm audit --audit-level=<level>`
+    default: "false"
+  npm-audit-level:
+    description: --audit-level value for the moderate `npm audit` step
+    default: moderate
+
+  skip-audit-ci:
+    description: >-
+      Force-skip the audit-ci high/critical gate even when an
+      `audit-ci.jsonc` is present. Note: the gate is already auto-skipped
+      if no config is found — see `audit-ci-config`. This input is the
+      only hard-fail check in the action, so prefer leaving it `"false"`.
+    default: "false"
+  audit-ci-config:
+    description: >-
+      Path to an audit-ci config (jsonc). Resolution order when empty:
+      1) `.github/audit-ci.jsonc` in the consumer repo (preferred);
+      2) `.github/scripts/audit-ci.jsonc` (legacy location, kept for back-compat);
+      3) `audit-ci.jsonc` at the consumer repo root.
+      If none of these exist (and this input is empty / points at a
+      missing file), the audit-ci high/critical gate is *skipped* —
+      the gate is strictly opt-in, enabled by committing a config file.
+    default: ""
+  audit-ci-version:
+    description: audit-ci npm package version to run via `npm exec`
+    default: "7"
+
+  summary-title:
+    description: Heading rendered above the audit summary table in $GITHUB_STEP_SUMMARY
+    default: Core Security Audit Summary
+  scope-label:
+    description: Label used in the Scope column of the audit summary table
+    default: Core
+
+runs:
+  using: composite
+  steps:
+    - name: Dependency Review
+      if: ${{ inputs.skip-dependency-review != 'true' }}
+      uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      with:
+        fail-on-severity: ${{ inputs.dependency-review-fail-on-severity }}
+        vulnerability-check: ${{ inputs.dependency-review-vulnerability-check }}
+        license-check: ${{ inputs.dependency-review-license-check }}
+        comment-summary-in-pr: ${{ inputs.dependency-review-comment-summary-in-pr }}
+
+    - name: Lockfile consistency check
+      if: ${{ inputs.skip-lockfile-check != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        # --ignore-scripts: package-lock-only still triggers the root package's
+        # lifecycle hooks without a full install; skip them so this check only
+        # validates lockfile ↔ package.json (no dev CLIs required on PATH).
+        npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+        git diff --exit-code package-lock.json || (
+          echo "::error::package-lock.json is out of sync with package.json. Run 'npm install' and commit the updated lockfile."
+          exit 1
+        )
+
+    - name: NPM Audit (signatures, moderate, audit-ci high/critical)
+      shell: bash
+      env:
+        SKIP_SIGS: ${{ inputs.skip-npm-audit-signatures }}
+        SKIP_MOD: ${{ inputs.skip-npm-audit-moderate }}
+        SKIP_AUDIT_CI: ${{ inputs.skip-audit-ci }}
+        AUDIT_LEVEL: ${{ inputs.npm-audit-level }}
+        AUDIT_CI_VERSION: ${{ inputs.audit-ci-version }}
+        AUDIT_CI_CONFIG_INPUT: ${{ inputs.audit-ci-config }}
+        SUMMARY_TITLE: ${{ inputs.summary-title }}
+        SCOPE_LABEL: ${{ inputs.scope-label }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -e
+
+        AUDIT_CI_CONFIG=""
+        if [ -n "${AUDIT_CI_CONFIG_INPUT}" ]; then
+          if [ -f "${AUDIT_CI_CONFIG_INPUT}" ]; then
+            AUDIT_CI_CONFIG="${AUDIT_CI_CONFIG_INPUT}"
+          else
+            echo "::warning::audit-ci-config input '${AUDIT_CI_CONFIG_INPUT}' was set but the file does not exist; high/critical gate will be skipped."
+          fi
+        elif [ -f "${GITHUB_WORKSPACE}/.github/audit-ci.jsonc" ]; then
+          AUDIT_CI_CONFIG="${GITHUB_WORKSPACE}/.github/audit-ci.jsonc"
+        elif [ -f "${GITHUB_WORKSPACE}/.github/scripts/audit-ci.jsonc" ]; then
+          AUDIT_CI_CONFIG="${GITHUB_WORKSPACE}/.github/scripts/audit-ci.jsonc"
+        elif [ -f "${GITHUB_WORKSPACE}/audit-ci.jsonc" ]; then
+          AUDIT_CI_CONFIG="${GITHUB_WORKSPACE}/audit-ci.jsonc"
+        fi
+
+        if [ -z "${AUDIT_CI_CONFIG}" ]; then
+          echo "::notice::No audit-ci.jsonc found in consumer repo (looked for .github/audit-ci.jsonc, .github/scripts/audit-ci.jsonc, audit-ci.jsonc). High/critical gate skipped — commit .github/audit-ci.jsonc to enable it."
+          echo "Resolved audit-ci config: <none, gate will be skipped>"
+        else
+          echo "Resolved audit-ci config: ${AUDIT_CI_CONFIG}"
+        fi
+
+        SIGNATURES_STATUS="SKIP"
+        MODERATE_STATUS="SKIP"
+        HIGH_STATUS="SKIP"
+        HIGH_EXIT=0
+
+        set +e
+        if [ "${SKIP_SIGS}" != "true" ]; then
+          npm audit signatures 2>&1
+          SIG_EXIT=$?
+          [ $SIG_EXIT -eq 0 ] && SIGNATURES_STATUS="PASS" || SIGNATURES_STATUS="WARN"
+        fi
+        if [ "${SKIP_MOD}" != "true" ]; then
+          npm audit --audit-level="${AUDIT_LEVEL}" 2>&1
+          MOD_EXIT=$?
+          [ $MOD_EXIT -eq 0 ] && MODERATE_STATUS="PASS" || MODERATE_STATUS="WARN"
+        fi
+        if [ "${SKIP_AUDIT_CI}" != "true" ] && [ -n "${AUDIT_CI_CONFIG}" ]; then
+          npm exec --yes -- audit-ci@${AUDIT_CI_VERSION} --config "${AUDIT_CI_CONFIG}" 2>&1
+          HIGH_EXIT=$?
+          [ $HIGH_EXIT -eq 0 ] && HIGH_STATUS="PASS" || HIGH_STATUS="WARN"
+        fi
+        set -e
+
+        AUD_JSON="${RUNNER_TEMP:-/tmp}/oss-security-checks-npm-audit.json"
+        npm audit --json > "${AUD_JSON}" 2>/dev/null || true
+
+        {
+          echo "## ${SUMMARY_TITLE}"
+          echo ""
+          echo "| Scope | Signatures Audit | Moderate Audit | High/Critical (audit-ci) | Gate |"
+          echo "|---|---|---|---|---|"
+          echo "| ${SCOPE_LABEL} | ${SIGNATURES_STATUS} | ${MODERATE_STATUS} | ${HIGH_STATUS} | High/Critical (audit-ci + allowlist) |"
+          echo ""
+          if [ -n "${AUDIT_CI_CONFIG}" ]; then
+            echo "High/Critical gate uses \`audit-ci\` with \`${AUDIT_CI_CONFIG}\`."
+          else
+            echo "> [!NOTE]"
+            echo "> High/Critical \`audit-ci\` gate **skipped**: no \`audit-ci.jsonc\` found in this repo."
+            echo "> Commit \`.github/audit-ci.jsonc\` to opt in (minimal config: \`{ \"high\": true, \"allowlist\": [] }\`)."
+          fi
+          echo ""
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        bash "${ACTION_PATH}/scripts/github-summary-npm-audit.sh" "${AUD_JSON}" >> "$GITHUB_STEP_SUMMARY" || true
+        {
+          echo ""
+          if [ -n "${AUDIT_CI_CONFIG}" ]; then
+            echo "**Note:** The \`npm audit\` sections above (overview, moderate, high/critical) are built from **\`npm audit --json\`**. Job success still depends on **audit-ci** (\`${AUDIT_CI_CONFIG}\`); allowlisted GHSA IDs may remain listed."
+          else
+            echo "**Note:** The \`npm audit\` sections above are built from **\`npm audit --json\`**. The \`audit-ci\` gate is currently disabled in this repo, so job success is **not** blocked by these advisories."
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "${SIGNATURES_STATUS}" = "WARN" ]; then
+          echo "::warning::npm audit signatures reported issues"
+        fi
+        if [ "${MODERATE_STATUS}" = "WARN" ]; then
+          echo "::warning::npm audit reported moderate-level issues"
+        fi
+        if [ "${HIGH_STATUS}" = "WARN" ]; then
+          echo "::error::audit-ci reported high/critical issues (see audit-ci config allowlist)"
+        fi
+
+        exit $HIGH_EXIT
