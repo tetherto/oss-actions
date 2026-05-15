@@ -1,0 +1,256 @@
+name: Docker image
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        description: Image name without registry prefix
+        required: true
+        type: string
+      registry:
+        description: Artifact Registry host and repository path
+        required: true
+        type: string
+      platforms:
+        description: Buildx platforms
+        required: false
+        type: string
+        default: "linux/amd64"
+      dockerfile:
+        description: Dockerfile path relative to working_directory
+        required: false
+        type: string
+        default: "Dockerfile"
+      working_directory:
+        description: Build context directory
+        required: false
+        type: string
+        default: "."
+      push:
+        description: Push image to registry
+        required: false
+        type: boolean
+        default: true
+      extra_tags:
+        description: Extra image tags, one per line
+        required: false
+        type: string
+        default: ""
+      build_args:
+        description: Extra build-args, one KEY=VALUE per line
+        required: false
+        type: string
+        default: ""
+      gcp_workload_identity_provider:
+        description: GCP workload identity provider
+        required: true
+        type: string
+      gcp_service_account:
+        description: GCP service account email
+        required: true
+        type: string
+      enable_provenance:
+        description: Attest build provenance
+        required: false
+        type: boolean
+        default: true
+      enable_sbom:
+        description: Generate and attest SBOM
+        required: false
+        type: boolean
+        default: true
+      enable_cosign:
+        description: Sign image with cosign
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      PAT_TOKEN:
+        description: PAT for private git dependencies
+        required: true
+    outputs:
+      image_digest:
+        description: Image digest
+        value: ${{ jobs.build.outputs.digest }}
+      image_uri:
+        description: Image URI with digest
+        value: ${{ jobs.build.outputs.image_uri }}
+
+permissions: {}
+
+jobs:
+  build:
+    name: build-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: read
+
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      image_uri: ${{ steps.uri.outputs.uri }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        id: gcp_auth
+        uses: google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935 # v2.1.8
+        with:
+          workload_identity_provider: ${{ inputs.gcp_workload_identity_provider }}
+          service_account: ${{ inputs.gcp_service_account }}
+          token_format: access_token
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          REGISTRY_HOST="${REGISTRY%%/*}"
+          echo "Configuring docker auth for ${REGISTRY_HOST}"
+          gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
+        env:
+          REGISTRY: ${{ inputs.registry }}
+
+      - name: Set up QEMU
+        if: contains(inputs.platforms, ',')
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+        with:
+          driver-opts: |
+            image=moby/buildkit:v0.20.0
+          buildkitd-flags: --debug
+
+      - name: Compute image metadata
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ inputs.registry }}/${{ inputs.image_name }}
+          tags: |
+            type=sha,format=long
+            type=sha,format=short,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=pr,prefix=pr-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            ${{ inputs.extra_tags }}
+          labels: |
+            org.opencontainers.image.title=${{ inputs.image_name }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version={{version}}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.vendor=Tether
+
+      - name: Stage PAT for BuildKit secret
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          umask 077
+          printf '%s' "${PAT_TOKEN}" > "${RUNNER_TEMP}/pat_token"
+          echo "PAT_TOKEN_FILE=${RUNNER_TEMP}/pat_token" >> "$GITHUB_ENV"
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.18.0
+        with:
+          context: ${{ inputs.working_directory }}
+          file: ${{ inputs.working_directory }}/${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          provenance: ${{ inputs.enable_provenance }}
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          secret-files: |
+            PAT_TOKEN=${{ env.PAT_TOKEN_FILE }}
+          cache-from: |
+            type=gha,scope=${{ inputs.image_name }}
+            type=registry,ref=${{ inputs.registry }}/${{ inputs.image_name }}:buildcache
+          cache-to: |
+            type=gha,scope=${{ inputs.image_name }},mode=max
+            type=registry,ref=${{ inputs.registry }}/${{ inputs.image_name }}:buildcache,mode=max,image-manifest=true
+          build-args: |
+            BUILD_VERSION=${{ steps.meta.outputs.version }}
+            BUILD_REVISION=${{ github.sha }}
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            ${{ inputs.build_args }}
+
+      - name: Wipe staged PAT
+        if: always()
+        run: |
+          shred -u "${PAT_TOKEN_FILE}" 2>/dev/null || rm -f "${PAT_TOKEN_FILE}" || true
+
+      - name: Compute primary image URI
+        id: uri
+        if: inputs.push
+        run: |
+          echo "uri=${{ inputs.registry }}/${{ inputs.image_name }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        if: inputs.push && inputs.enable_cosign
+        uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
+
+      - name: Sign image
+        if: inputs.push && inputs.enable_cosign
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+          IMAGE_URI: ${{ steps.uri.outputs.uri }}
+        run: |
+          cosign sign --yes "${IMAGE_URI}"
+
+      - name: Attest build provenance
+        if: inputs.push && inputs.enable_provenance
+        uses: actions/attest-build-provenance@db473fddc028af60658334401dc6fa3ffd8669fd # v2.3.0
+        with:
+          subject-name: ${{ inputs.registry }}/${{ inputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate SBOM
+        if: inputs.push && inputs.enable_sbom
+        uses: anchore/sbom-action@e11c554f704a0b820cbf8c51673f6945e0731532 # v0.20.0
+        with:
+          image: ${{ steps.uri.outputs.uri }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+          upload-release-assets: false
+
+      - name: Attest SBOM
+        if: inputs.push && inputs.enable_sbom
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2.4.0
+        with:
+          subject-name: ${{ inputs.registry }}/${{ inputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: sbom.spdx.json
+          push-to-registry: true
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Image build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Image | \`${{ inputs.registry }}/${{ inputs.image_name }}\` |"
+            echo "| Digest | \`${{ steps.build.outputs.digest }}\` |"
+            echo "| Pushed | \`${{ inputs.push }}\` |"
+            echo "| Platforms | \`${{ inputs.platforms }}\` |"
+            echo "| Signed | \`${{ inputs.enable_cosign && inputs.push }}\` |"
+            echo "| Provenance | \`${{ inputs.enable_provenance && inputs.push }}\` |"
+            echo "| SBOM | \`${{ inputs.enable_sbom && inputs.push }}\` |"
+            echo ""
+            echo "**Tags pushed:**"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
