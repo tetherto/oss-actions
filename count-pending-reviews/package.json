@@ -1,0 +1,24 @@
+{
+  "name": "pending-reviews-action",
+  "version": "1.0.0",
+  "description": "Checks PR approval requirements by role and posts a commit status + PR comment",
+  "scripts": {
+    "build": "ncc build src/index.js -o dist --quiet",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "@actions/core": "^2.0.3",
+    "@actions/github": "^8.0.1"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.3",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  }
+}
