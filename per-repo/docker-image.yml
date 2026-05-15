@@ -1,0 +1,42 @@
+# Copy to .github/workflows/docker-image.yml and set image_name.
+# Secrets: PAT_TOKEN
+# Variables: IMAGE_REGISTRY, GCP_WORKLOAD_IDENTITY_PROVIDER, GCP_SERVICE_ACCOUNT
+
+name: Docker image
+
+on:
+  push:
+    branches: [main, dev, staging]
+    tags: ["v*.*.*"]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, dev, staging]
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push image to registry
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: docker-image-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      packages: read
+    uses: tetherto/oss-actions/.github/workflows/docker-image.yml@v1
+    with:
+      image_name: <REPLACE_WITH_IMAGE_NAME>
+      registry: ${{ vars.IMAGE_REGISTRY }}
+      platforms: linux/amd64
+      push: ${{ github.event_name != 'pull_request' && (inputs.push == null || inputs.push) }}
+      gcp_workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
