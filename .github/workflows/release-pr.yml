@@ -43,8 +43,7 @@ jobs:
           BUMP: ${{ inputs.bump }}
           PREID: ${{ inputs.preid }}
         run: |
-          PREID_ARG=${{ inputs.preid != '' && format('--preid={0}', inputs.preid) || '' }}
-          NEW_VERSION=$(npm version "$BUMP" $PREID_ARG --no-git-tag-version)
+          NEW_VERSION=$(npm version "$BUMP" ${PREID:+"--preid=$PREID"} --no-git-tag-version)
           echo "version=${NEW_VERSION#v}" >> "$GITHUB_OUTPUT"
           echo "branch=release/v${NEW_VERSION#v}" >> "$GITHUB_OUTPUT"
 
